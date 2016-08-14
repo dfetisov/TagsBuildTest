@@ -4,7 +4,8 @@ task getTagsInfo << {
     final int PROJECT_START_VERSION_CODE = 1;
     final String PROJECT_BUILD_BRANCH = "master";
     final String PROJECT_BUILD_GRADLE_PATH = "app/build.gradle";
-    final SimpleDateFormat simpleDateFormat = new SimpleDateFormat("HH:mm dd-MM-YYYY")
+    final SimpleDateFormat simpleDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+    simpleDateFormat.setTimeZone(TimeZone.getTimeZone("GMT+0300"));
 
     def cmdCommand = "git log --date-order --tags --simplify-by-decoration --pretty=format%d"
     def result = cmdCommand.execute()
