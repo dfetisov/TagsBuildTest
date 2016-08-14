@@ -1,127 +1,123 @@
+import java.text.SimpleDateFormat
+
 task getTagsInfo << {
     final int PROJECT_START_VERSION_CODE = 1;
     final String PROJECT_BUILD_BRANCH = "master";
     final String PROJECT_BUILD_GRADLE_PATH = "app/build.gradle";
+    final SimpleDateFormat simpleDateFormat = new SimpleDateFormat("HH:mm dd-MM-YYYY")
 
-    def cmdCommand = "git tag"
+    def cmdCommand = "git log --date-order --tags --simplify-by-decoration --pretty=format%d"
     def result = cmdCommand.execute()
     String resultText = result.text;
 
     String[] tags = resultText.split("\n")
     String lastReleaseTag = "";
-    for (String tag : tags) {
-        if (!tag.contains("rc")) {
-            lastReleaseTag = tag;
+    for (int index = 0; index < tags.size(); index++) {
+        String tag = tags[index];
+        String str = "tag: ";
+        tag = tag.substring(tag.indexOf(str) + str.length(), tag.length()).replaceAll("\\)", "");
+        if (tag.contains(",")) {
+            //(HEAD, tag: 0.2-rc-1, origin/master, master) т.е. последний тэг, здесь у нас осталось 0.2-rc-1, origin/master, master
+            tag = tag.substring(0, tag.indexOf(","))
         }
+        tags[index] = tag;
     }
+    if (tags.size() > 0) {
+        String versionName = tags[0];
 
-    String versionName = tags[tags.size() - 1];
-    if (!lastReleaseTag.isEmpty() && versionName.contains(lastReleaseTag + "-rc-")) {
-        versionName = lastReleaseTag;
-    }
-
-    int versionCode = PROJECT_START_VERSION_CODE;
-    for (String tag : tags) {
-        if (!tag.contains("rc")) {
-            versionCode++;
-        }
-    }
-
-    println("\nstarting to override versionName & versionCode...\n")
-    println(String.format("versionName = %s", versionName))
-    println(String.format("versionCode = %d", versionCode))
-
-    String oldFileName = PROJECT_BUILD_GRADLE_PATH;
-    String tmpFileName = "temp_build.gradle";
-
-    BufferedReader br = null;
-    FileWriter fileWriter = null;
-    try {
-        br = new BufferedReader(new FileReader(oldFileName));
-        fileWriter = new FileWriter(tmpFileName);
-        String line;
-        while ((line = br.readLine()) != null) {
-            if (line.contains("versionName")) {
-                line = line.subSequence(0, line.indexOf("versionName") + "versionName".length())
-                line = String.format("%s \"%s\"", line, versionName);
-            }
-            if (line.contains("versionCode")) {
-                line = line.subSequence(0, line.indexOf("versionCode") + "versionCode".length())
-                line = String.format("%s %d", line, versionCode);
-            }
-            fileWriter.append(line + "\n");
-        }
-    } catch (Exception e) {
-        e.printStackTrace()
-    } finally {
-        try {
-            if (br != null)
-                br.close();
-        } catch (IOException e) {
-            e.printStackTrace()
-        }
-        try {
-            if (fileWriter != null)
-                fileWriter.close();
-        } catch (IOException e) {
-            e.printStackTrace()
-        }
-    }
-    // Once everything is complete, delete old file..
-    File oldFile = new File(oldFileName);
-    oldFile.delete();
-
-    // And rename tmp file's name to old file name
-    File newFile = new File(tmpFileName);
-    newFile.renameTo(oldFile);
-
-
-
-    String tagToCheck = versionName;
-    String tagFromCheck = versionName.equals(lastReleaseTag) ? tags[tags.size() - 1] : tags[tags.size() - 2]
-    String supposedReleaseVersionName;
-    if (versionName.equals(lastReleaseTag)){
-        supposedReleaseVersionName = lastReleaseTag;
-    } else {
-        supposedReleaseVersionName = versionName.substring(0,versionName.indexOf("-"))
-    }
-
-    println("\ngetting commit messages...\n")
-    cmdCommand = String.format("git rev-list -n 1 %s", tagToCheck);
-    result = cmdCommand.execute()
-    String commitToHash = result.text;
-
-    cmdCommand = "git log -n 1 --pretty=format:%ad --date=local " + commitToHash;
-    result = cmdCommand.execute()
-    String commitToDate = result.text;
-    println("Last commit date = " + commitToDate)
-
-    String commitFromHash;
-    if (tags.size() > 1) {
+        int versionCode = PROJECT_START_VERSION_CODE;
         for (String tag : tags) {
-            if (tag.contains(supposedReleaseVersionName + "-rc-")) {
-                tagFromCheck = tag;
-                break;
+            if (!tag.contains("rc")) {
+                versionCode++;
             }
         }
 
-        cmdCommand = String.format("git rev-list -n 1 %s", tagFromCheck);
+        println("\nstarting to override versionName & versionCode...\n")
+        println(String.format("versionName = %s", versionName))
+        println(String.format("versionCode = %d", versionCode))
+
+        String oldFileName = PROJECT_BUILD_GRADLE_PATH;
+        String tmpFileName = "temp_build.gradle";
+
+        BufferedReader br = null;
+        FileWriter fileWriter = null;
+        try {
+            br = new BufferedReader(new FileReader(oldFileName));
+            fileWriter = new FileWriter(tmpFileName);
+            String line;
+            while ((line = br.readLine()) != null) {
+                if (line.contains("versionName")) {
+                    line = line.subSequence(0, line.indexOf("versionName") + "versionName".length())
+                    line = String.format("%s \"%s\"", line, versionName);
+                }
+                if (line.contains("versionCode")) {
+                    line = line.subSequence(0, line.indexOf("versionCode") + "versionCode".length())
+                    line = String.format("%s %d", line, versionCode);
+                }
+                fileWriter.append(line + "\n");
+            }
+        } catch (Exception e) {
+            e.printStackTrace()
+        } finally {
+            try {
+                if (br != null)
+                    br.close();
+            } catch (IOException e) {
+                e.printStackTrace()
+            }
+            try {
+                if (fileWriter != null)
+                    fileWriter.close();
+            } catch (IOException e) {
+                e.printStackTrace()
+            }
+        }
+        // Once everything is complete, delete old file..
+        File oldFile = new File(oldFileName);
+        oldFile.delete();
+
+        // And rename tmp file's name to old file name
+        File newFile = new File(tmpFileName);
+        newFile.renameTo(oldFile);
+
+
+
+        String tagToCheck = versionName;
+        String tagFromCheck = tags.size() > 1 ? tags[1] : null
+
+        println("\ngetting commit messages...\n")
+        cmdCommand = String.format("git rev-list -n 1 %s", tagToCheck);
         result = cmdCommand.execute()
-        commitFromHash = result.text;
-    } else {
-        cmdCommand = String.format("git rev-list --max-parents=0 HEAD");
+        String commitToHash = result.text;
+
+        cmdCommand = "git log -n 1 --pretty=format:%at --date=local " + commitToHash;
         result = cmdCommand.execute()
-        commitFromHash = result.text;
+        long commitToDate = Long.valueOf(result.text);
+        println("Last commit date = " + simpleDateFormat.format(new Date(commitToDate * 1000)))
+
+        String commitFromHash;
+        boolean needIncrementDate = false;
+        if (tagFromCheck != null) {
+            needIncrementDate = true
+
+            cmdCommand = String.format("git rev-list -n 1 %s", tagFromCheck);
+            result = cmdCommand.execute()
+            commitFromHash = result.text;
+        } else {
+            cmdCommand = String.format("git rev-list --max-parents=0 HEAD");
+            result = cmdCommand.execute()
+            commitFromHash = result.text;
+        }
+
+        cmdCommand = "git log -n 1 --pretty=format:%at " + commitFromHash;
+        result = cmdCommand.execute()
+        long commitFromDate = Long.valueOf(result.text) + (needIncrementDate ? 1 : 0);
+        println("First commit date = " + simpleDateFormat.format(new Date(commitFromDate * 1000)))
+
+
+        cmdCommand = String.format("git log --since=\"%s\" --until=\"%s\" --pretty=format:", commitFromDate, commitToDate) + "%s " + PROJECT_BUILD_BRANCH
+        result = cmdCommand.execute()
+        String commitMessage = result.text;
+        println("\nCommit messages:\n\n" + commitMessage)
     }
-
-    cmdCommand = "git log -n 1 --pretty=format:%ad --date=local " + commitFromHash;
-    result = cmdCommand.execute()
-    String commitFromDate = result.text;
-    println("First commit date = " + commitFromDate)
-
-
-    cmdCommand = String.format("git log --since=\"%s\" --until=\"%s\" --pretty=format:",commitFromDate, commitToDate) + "%s " + PROJECT_BUILD_BRANCH
-    result = cmdCommand.execute()
-    String commitMessage = result.text;
-    println("\nCommit messages:\n\n" + commitMessage)
 }
