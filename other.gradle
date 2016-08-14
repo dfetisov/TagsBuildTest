@@ -1,0 +1,70 @@
+task getTagsInfo << {
+    int projectStartVersionCode = 11;
+
+    def cmdCommand = "git tag"
+    def result = cmdCommand.execute()
+    String resultText = result.text;
+    println(resultText)
+    println()
+    String[] tags = resultText.split("\n")
+    for (String tag : tags) {
+        println(tag)
+    }
+
+    String versionName = tags[tags.size() - 1];
+    int versionCode = projectStartVersionCode;
+    for (String tag : tags){
+        if (!tag.contains("rc")){
+            versionCode++;
+        }
+    }
+
+    println("start to override versionName & versionCode")
+
+    File buildGradleFile = new File("app/build.gradle")
+    println(buildGradleFile.getAbsolutePath())
+
+    String oldFileName = "app/build.gradle";
+    String tmpFileName = "app/temp_build.gradle";
+
+    BufferedReader br = null;
+    FileWriter fileWriter = null;
+    try {
+        br = new BufferedReader(new FileReader(oldFileName));
+        fileWriter = new FileWriter(tmpFileName);
+        String line;
+        while ((line = br.readLine()) != null) {
+            if (line.contains("versionName")) {
+                line = line.subSequence(0, line.indexOf("versionName") + "versionName".length())
+                line = String.format("%s \"%s\"", line, versionName);
+            }
+            if (line.contains("versionCode")){
+                line = line.subSequence(0, line.indexOf("versionCode") + "versionCode".length())
+                line = String.format("%s %d", line, versionCode);
+            }
+            fileWriter.append(line + "\n");
+        }
+    } catch (Exception e) {
+        e.printStackTrace()
+    } finally {
+        try {
+            if (br != null)
+                br.close();
+        } catch (IOException e) {
+            e.printStackTrace()
+        }
+        try {
+            if (fileWriter != null)
+                fileWriter.close();
+        } catch (IOException e) {
+            e.printStackTrace()
+        }
+    }
+    // Once everything is complete, delete old file..
+    File oldFile = new File(oldFileName);
+    oldFile.delete();
+
+    // And rename tmp file's name to old file name
+    File newFile = new File(tmpFileName);
+    newFile.renameTo(oldFile);
+}
