@@ -1,31 +1,38 @@
 task getTagsInfo << {
-    int projectStartVersionCode = 11;
+    final int PROJECT_START_VERSION_CODE = 1;
+    final String PROJECT_BUILD_BRANCH = "master";
+    final String PROJECT_BUILD_GRADLE_PATH = "app/build.gradle";
 
     def cmdCommand = "git tag"
     def result = cmdCommand.execute()
     String resultText = result.text;
-    println(resultText)
-    println()
+
     String[] tags = resultText.split("\n")
+    String lastReleaseTag = "";
     for (String tag : tags) {
-        println(tag)
+        if (!tag.contains("rc")) {
+            lastReleaseTag = tag;
+        }
     }
 
     String versionName = tags[tags.size() - 1];
-    int versionCode = projectStartVersionCode;
-    for (String tag : tags){
-        if (!tag.contains("rc")){
+    if (!lastReleaseTag.isEmpty() && versionName.contains(lastReleaseTag + "-rc-")) {
+        versionName = lastReleaseTag;
+    }
+
+    int versionCode = PROJECT_START_VERSION_CODE;
+    for (String tag : tags) {
+        if (!tag.contains("rc")) {
             versionCode++;
         }
     }
 
-    println("start to override versionName & versionCode")
+    println("\nstarting to override versionName & versionCode...\n")
+    println(String.format("versionName = %s", versionName))
+    println(String.format("versionCode = %d", versionCode))
 
-    File buildGradleFile = new File("app/build.gradle")
-    println(buildGradleFile.getAbsolutePath())
-
-    String oldFileName = "app/build.gradle";
-    String tmpFileName = "app/temp_build.gradle";
+    String oldFileName = PROJECT_BUILD_GRADLE_PATH;
+    String tmpFileName = "temp_build.gradle";
 
     BufferedReader br = null;
     FileWriter fileWriter = null;
@@ -38,7 +45,7 @@ task getTagsInfo << {
                 line = line.subSequence(0, line.indexOf("versionName") + "versionName".length())
                 line = String.format("%s \"%s\"", line, versionName);
             }
-            if (line.contains("versionCode")){
+            if (line.contains("versionCode")) {
                 line = line.subSequence(0, line.indexOf("versionCode") + "versionCode".length())
                 line = String.format("%s %d", line, versionCode);
             }
@@ -67,4 +74,54 @@ task getTagsInfo << {
     // And rename tmp file's name to old file name
     File newFile = new File(tmpFileName);
     newFile.renameTo(oldFile);
+
+
+
+    String tagToCheck = versionName;
+    String tagFromCheck = versionName.equals(lastReleaseTag) ? tags[tags.size() - 1] : tags[tags.size() - 2]
+    String supposedReleaseVersionName;
+    if (versionName.equals(lastReleaseTag)){
+        supposedReleaseVersionName = lastReleaseTag;
+    } else {
+        supposedReleaseVersionName = versionName.substring(0,versionName.indexOf("-"))
+    }
+
+    println("\ngetting commit messages...\n")
+    cmdCommand = String.format("git rev-list -n 1 %s", tagToCheck);
+    result = cmdCommand.execute()
+    String commitToHash = result.text;
+
+    cmdCommand = "git log -n 1 --pretty=format:%ad --date=local " + commitToHash;
+    result = cmdCommand.execute()
+    String commitToDate = result.text;
+    println("Last commit date = " + commitToDate)
+
+    String commitFromHash;
+    if (tags.size() > 1) {
+        for (String tag : tags) {
+            if (tag.contains(supposedReleaseVersionName + "-rc-")) {
+                tagFromCheck = tag;
+                break;
+            }
+        }
+
+        cmdCommand = String.format("git rev-list -n 1 %s", tagFromCheck);
+        result = cmdCommand.execute()
+        commitFromHash = result.text;
+    } else {
+        cmdCommand = String.format("git rev-list --max-parents=0 HEAD");
+        result = cmdCommand.execute()
+        commitFromHash = result.text;
+    }
+
+    cmdCommand = "git log -n 1 --pretty=format:%ad --date=local " + commitFromHash;
+    result = cmdCommand.execute()
+    String commitFromDate = result.text;
+    println("First commit date = " + commitFromDate)
+
+
+    cmdCommand = String.format("git log --since=\"%s\" --until=\"%s\" --pretty=format:",commitFromDate, commitToDate) + "%s " + PROJECT_BUILD_BRANCH
+    result = cmdCommand.execute()
+    String commitMessage = result.text;
+    println("\nCommit messages:\n\n" + commitMessage)
 }
