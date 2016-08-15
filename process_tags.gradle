@@ -1,6 +1,6 @@
 import java.text.SimpleDateFormat
 
-task getTagsInfo << {
+task processTags << {
     final int PROJECT_START_VERSION_CODE = 1;
     final String PROJECT_BUILD_BRANCH = "master";
     final String PROJECT_BUILD_GRADLE_PATH = "app/build.gradle";
@@ -65,17 +65,17 @@ private void fillReleaseNotes(String versionName, String date, String commits, S
     String outputMessage = "";
     for (String message : messages) {
         if (message.startsWith("<mod>") && message.endsWith("</mod>")) {
-            outputMessage = String.format("%s\nModification - %s", outputMessage, message.replaceAll("<mod>", "").replaceAll("</mod>"), "");
+            outputMessage = String.format("%s\nModification - %s", outputMessage, message.replaceAll("<mod>", "").replaceAll("</mod>", ""));
         }
         if (message.startsWith("<fix>") && message.endsWith("</fix>")) {
-            outputMessage = String.format("%s\nFix - %s", outputMessage, message.replaceAll("<fix>", "").replaceAll("</fix>"), "");
+            outputMessage = String.format("%s\nFix - %s", outputMessage, message.replaceAll("<fix>", "").replaceAll("</fix>", ""));
         }
         if (message.startsWith("<ui>") && message.endsWith("</ui>")) {
-            outputMessage = String.format("%s\nUI - %s", outputMessage, message.replaceAll("<ui>", "").replaceAll("</ui>"), "");
+            outputMessage = String.format("%s\nUI - %s", outputMessage, message.replaceAll("<ui>", "").replaceAll("</ui>", ""));
         }
     }
     if (!outputMessage.isEmpty()) {
-        outputMessage = String.format("%s\n%s\n%s", versionName, date, outputMessage)
+        outputMessage = String.format("%s\n%s%s", versionName, date, outputMessage)
 
         FileWriter commonFileWriter = null;
         FileWriter crashlyticsFileWriter = null;
