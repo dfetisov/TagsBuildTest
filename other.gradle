@@ -4,15 +4,189 @@ task getTagsInfo << {
     final int PROJECT_START_VERSION_CODE = 1;
     final String PROJECT_BUILD_BRANCH = "master";
     final String PROJECT_BUILD_GRADLE_PATH = "app/build.gradle";
+    final String COMMON_RELEASE_NOTES_FILE_PATH = "app/release_notes/common_release_notes.txt";
+    final String CRASHLYTICS_RELEASE_NOTES_FILE_PATH = "app/release_notes/crashlytics_release_notes.txt";
+
+    //берем тэги из гита, упорядоченные по убыванию даты создания
+    String rawTags = executeCommand("git log --date-order --tags --simplify-by-decoration --pretty=format%d")
+    String[] tags = parseTags(rawTags)
+
+    if (tags.size() > 0) {
+        println("Tags are exist, start data processing")
+
+        String versionName = tags[0];
+        int versionCode = calculateVersionCode(PROJECT_START_VERSION_CODE, tags)
+
+        println("Override versionName & versionCode...")
+        println(String.format("VersionName = %s", versionName))
+        println(String.format("VersionCode = %d", versionCode))
+
+        replaceVersionData(PROJECT_BUILD_GRADLE_PATH, versionName, versionCode)
+
+        String tagToCheck = versionName;
+        String tagFromCheck = tags.size() > 1 ? tags[1] : null
+
+        println("Getting commit messages...")
+
+        //вычисляем дату последнего коммита прошлой версии - стартовая граница для фильтрации
+        String commitFromHash;
+        boolean needIncrementDate = false;
+        if (tagFromCheck != null) {
+            //прошлая версия была, берем хэш ее последнего коммита и запоминаем, что нужно будет прибавить 1 сек ко времени
+            needIncrementDate = true
+            commitFromHash = executeCommand(String.format("git rev-list -n 1 %s", tagFromCheck));
+        } else {
+            //мы только начали проект, версий до этого не было, берем хэш самого первого коммита
+            commitFromHash = executeCommand(String.format("git rev-list --max-parents=0 HEAD"));
+        }
+        long commitFromDate = Long.valueOf(executeCommand("git log -n 1 --pretty=format:%at " + commitFromHash)) + (needIncrementDate ? 1 : 0);
+
+        println("First commit date = " + getFormattedDate(commitFromDate))
+
+        //вычисляем дату последнего коммита текущей версии - конечная граница для фильтрации
+        String commitToHash = executeCommand(String.format("git rev-list -n 1 %s", tagToCheck))
+        long commitToDate = Long.valueOf(executeCommand("git log -n 1 --pretty=format:%at --date=local " + commitToHash));
+
+        println("Last commit date = " + getFormattedDate(commitToDate))
+
+        //берем сообщения коммитов, которые попали в промежуток между commitFromDate и commitToDate из ветки PROJECT_BUILD_BRANCH
+        String cmdCommand = String.format("git log --since=\"%s\" --until=\"%s\" --pretty=format:", commitFromDate, commitToDate) + "%s " + PROJECT_BUILD_BRANCH
+        String commitMessages = executeCommand(cmdCommand)
+
+        fillReleaseNotes(versionName, getFormattedDate(commitToDate), commitMessages, COMMON_RELEASE_NOTES_FILE_PATH, CRASHLYTICS_RELEASE_NOTES_FILE_PATH)
+
+    } else {
+        println("There is no tags")
+    }
+}
+
+private void fillReleaseNotes(String versionName, String date, String commits, String commonNotesPath, String crashlyticsNotesPath) {
+    String[] messages = commits.split("\n")
+    String outputMessage = "";
+    for (String message : messages) {
+        if (message.startsWith("<mod>") && message.endsWith("</mod>")) {
+            outputMessage = String.format("%s\nModification - %s", outputMessage, message.replaceAll("<mod>", "").replaceAll("</mod>"), "");
+        }
+        if (message.startsWith("<fix>") && message.endsWith("</fix>")) {
+            outputMessage = String.format("%s\nFix - %s", outputMessage, message.replaceAll("<fix>", "").replaceAll("</fix>"), "");
+        }
+        if (message.startsWith("<ui>") && message.endsWith("</ui>")) {
+            outputMessage = String.format("%s\nUI - %s", outputMessage, message.replaceAll("<ui>", "").replaceAll("</ui>"), "");
+        }
+    }
+    if (!outputMessage.isEmpty()) {
+        outputMessage = String.format("%s\n%s\n%s", versionName, date, outputMessage)
+
+        FileWriter commonFileWriter = null;
+        FileWriter crashlyticsFileWriter = null;
+        BufferedReader bufferedReader = null;
+
+        try {
+            //заменяем предыдущее сообщение для крашлитикса
+            crashlyticsFileWriter = new FileWriter(crashlyticsNotesPath)
+            crashlyticsFileWriter.write(outputMessage)
+
+            //добавляем текущее сообщение в начало общих release notes
+            outputMessage += "\n\n"
+            bufferedReader = new BufferedReader(new FileReader(commonNotesPath));
+            String line;
+            while ((line = bufferedReader.readLine()) != null) {
+                outputMessage += line + "\n";
+            }
+            commonFileWriter = new FileWriter(commonNotesPath)
+            commonFileWriter.write(outputMessage)
+
+
+        } catch (Exception e) {
+            e.printStackTrace()
+        } finally {
+            try {
+                if (bufferedReader != null)
+                    bufferedReader.close();
+            } catch (IOException e) {
+                e.printStackTrace()
+            }
+            try {
+                if (commonFileWriter != null)
+                    commonFileWriter.close();
+            } catch (IOException e) {
+                e.printStackTrace()
+            }
+            try {
+                if (crashlyticsFileWriter != null)
+                    crashlyticsFileWriter.close();
+            } catch (IOException e) {
+                e.printStackTrace()
+            }
+        }
+
+        println("Messages added to release notes")
+    } else {
+        println("There is no messages for release notes")
+    }
+}
+
+private String getFormattedDate(long commitToDate) {
     final SimpleDateFormat simpleDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
     simpleDateFormat.setTimeZone(TimeZone.getTimeZone("GMT+0300"));
+    simpleDateFormat.format(new Date(commitToDate * 1000))
+}
 
-    def cmdCommand = "git log --date-order --tags --simplify-by-decoration --pretty=format%d"
-    def result = cmdCommand.execute()
-    String resultText = result.text;
+private void replaceVersionData(String PROJECT_BUILD_GRADLE_PATH, String versionName, int versionCode) {
+    String tmpFileName = "temp_build.gradle";
 
-    String[] tags = resultText.split("\n")
-    String lastReleaseTag = "";
+    BufferedReader br = null;
+    FileWriter fileWriter = null;
+    try {
+        br = new BufferedReader(new FileReader(PROJECT_BUILD_GRADLE_PATH));
+        fileWriter = new FileWriter(tmpFileName);
+        String line;
+        while ((line = br.readLine()) != null) {
+            if (line.contains("versionName")) {
+                line = line.subSequence(0, line.indexOf("versionName") + "versionName".length())
+                line = String.format("%s \"%s\"", line, versionName);
+            }
+            if (line.contains("versionCode")) {
+                line = line.subSequence(0, line.indexOf("versionCode") + "versionCode".length())
+                line = String.format("%s %d", line, versionCode);
+            }
+            fileWriter.append(line + "\n");
+        }
+    } catch (Exception e) {
+        e.printStackTrace()
+    } finally {
+        try {
+            if (br != null)
+                br.close();
+        } catch (IOException e) {
+            e.printStackTrace()
+        }
+        try {
+            if (fileWriter != null)
+                fileWriter.close();
+        } catch (IOException e) {
+            e.printStackTrace()
+        }
+    }
+    File oldFile = new File(PROJECT_BUILD_GRADLE_PATH);
+    oldFile.delete();
+
+    File newFile = new File(tmpFileName);
+    newFile.renameTo(oldFile);
+}
+
+private int calculateVersionCode(int PROJECT_START_VERSION_CODE, String[] tags) {
+    int versionCode = PROJECT_START_VERSION_CODE;
+    for (String tag : tags) {
+        if (!tag.contains("rc")) {
+            versionCode++;
+        }
+    }
+    versionCode
+}
+
+private String[] parseTags(String rawTags) {
+    String[] tags = rawTags.split("\n")
     for (int index = 0; index < tags.size(); index++) {
         String tag = tags[index];
         String str = "tag: ";
@@ -23,102 +197,13 @@ task getTagsInfo << {
         }
         tags[index] = tag;
     }
-    if (tags.size() > 0) {
-        String versionName = tags[0];
+    tags
+}
 
-        int versionCode = PROJECT_START_VERSION_CODE;
-        for (String tag : tags) {
-            if (!tag.contains("rc")) {
-                versionCode++;
-            }
-        }
-
-        println("\nstarting to override versionName & versionCode...\n")
-        println(String.format("versionName = %s", versionName))
-        println(String.format("versionCode = %d", versionCode))
-
-        String oldFileName = PROJECT_BUILD_GRADLE_PATH;
-        String tmpFileName = "temp_build.gradle";
-
-        BufferedReader br = null;
-        FileWriter fileWriter = null;
-        try {
-            br = new BufferedReader(new FileReader(oldFileName));
-            fileWriter = new FileWriter(tmpFileName);
-            String line;
-            while ((line = br.readLine()) != null) {
-                if (line.contains("versionName")) {
-                    line = line.subSequence(0, line.indexOf("versionName") + "versionName".length())
-                    line = String.format("%s \"%s\"", line, versionName);
-                }
-                if (line.contains("versionCode")) {
-                    line = line.subSequence(0, line.indexOf("versionCode") + "versionCode".length())
-                    line = String.format("%s %d", line, versionCode);
-                }
-                fileWriter.append(line + "\n");
-            }
-        } catch (Exception e) {
-            e.printStackTrace()
-        } finally {
-            try {
-                if (br != null)
-                    br.close();
-            } catch (IOException e) {
-                e.printStackTrace()
-            }
-            try {
-                if (fileWriter != null)
-                    fileWriter.close();
-            } catch (IOException e) {
-                e.printStackTrace()
-            }
-        }
-        // Once everything is complete, delete old file..
-        File oldFile = new File(oldFileName);
-        oldFile.delete();
-
-        // And rename tmp file's name to old file name
-        File newFile = new File(tmpFileName);
-        newFile.renameTo(oldFile);
-
-
-
-        String tagToCheck = versionName;
-        String tagFromCheck = tags.size() > 1 ? tags[1] : null
-
-        println("\ngetting commit messages...\n")
-        cmdCommand = String.format("git rev-list -n 1 %s", tagToCheck);
-        result = cmdCommand.execute()
-        String commitToHash = result.text;
-
-        cmdCommand = "git log -n 1 --pretty=format:%at --date=local " + commitToHash;
-        result = cmdCommand.execute()
-        long commitToDate = Long.valueOf(result.text);
-        println("Last commit date = " + simpleDateFormat.format(new Date(commitToDate * 1000)))
-
-        String commitFromHash;
-        boolean needIncrementDate = false;
-        if (tagFromCheck != null) {
-            needIncrementDate = true
-
-            cmdCommand = String.format("git rev-list -n 1 %s", tagFromCheck);
-            result = cmdCommand.execute()
-            commitFromHash = result.text;
-        } else {
-            cmdCommand = String.format("git rev-list --max-parents=0 HEAD");
-            result = cmdCommand.execute()
-            commitFromHash = result.text;
-        }
-
-        cmdCommand = "git log -n 1 --pretty=format:%at " + commitFromHash;
-        result = cmdCommand.execute()
-        long commitFromDate = Long.valueOf(result.text) + (needIncrementDate ? 1 : 0);
-        println("First commit date = " + simpleDateFormat.format(new Date(commitFromDate * 1000)))
-
-
-        cmdCommand = String.format("git log --since=\"%s\" --until=\"%s\" --pretty=format:", commitFromDate, commitToDate) + "%s " + PROJECT_BUILD_BRANCH
-        result = cmdCommand.execute()
-        String commitMessage = result.text;
-        println("\nCommit messages:\n\n" + commitMessage)
-    }
+private String executeCommand(String command) {
+    println(String.format("\nExecute command : %s\n", command))
+    def cmdCommand = command
+    def result = cmdCommand.execute()
+    String resultText = result.text
+    resultText
 }
